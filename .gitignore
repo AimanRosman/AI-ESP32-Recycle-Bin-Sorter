@@ -1,0 +1,16 @@
+# Local configuration and generated firmware
+secrets.h
+.env
+.env.*
+!.env.example
+build/
+.pio/
+*.elf
+*.hex
+*.ino.cpp
+*.ino.d
+
+# Editor and OS files
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,122 +1,87 @@
-# AI Smart Waste Sorter 🤖♻️
+# ESP32 Vision-Based Waste Sorter
 
-![Edge Impulse](https://img.shields.io/badge/Edge%20Impulse-TinyML-00d4ff?style=flat-square&logo=edgeimpulse)
-![ESP32](https://img.shields.io/badge/Espressif-ESP32-323232?style=flat-square&logo=espressif)
-![Arduino](https://img.shields.io/badge/Code-Arduino_VS_Code-00979C?style=flat-square&logo=arduino)
+A two-board embedded prototype that combines camera inference with a motorized sorting mechanism. An ESP32-CAM runs an Edge Impulse model and sends a waste label over the local network; a second ESP32 moves a stepper motor and opens a servo-controlled lid.
 
-An intelligent, dual-core IoT system that automatically classifies and sorts waste into **Metal**, **Plastic**, or **Paper** categories using Computer Vision on the edge.
+The project demonstrates TinyML integration, HTTP communication between devices, GPIO control, and browser-based monitoring. The repository contains application firmware; the trained model export and mechanical design are separate prerequisites.
 
-## 🌟 Project Overview
-
-This project leverages **Edge Impulse** to deploy a lightweight Machine Learning model directly onto an ESP32-CAM. The system is split into two independent modules for maximum performance:
-
-1.  **Vision Node (ESP32-CAM)**: Captures images, runs the AI inference, and hosts a live web dashboard.
-2.  **Control Node (ESP32)**: Receives classification data via HTTP, drives the stepper motor for sorting, and manages the lid servo.
-
-### Key Features
-*   **Real-time Edge AI**: Runs offline inference (FOMO/MobileNet) with <200ms latency.
-*   **Dual-Web Interface**: Separate dashboards for the Camera Feed and Manual Motor Control.
-*   **Static IP Architecture**: Seamless Android/Mobile access via fixed network addresses.
-*   **Robust Sorting Logic**: 3-streak confirmation algorithm to prevent false positives.
-*   **Hardware Calibration**: Manual control mode to fine-tune stepper motor angles.
-
----
-
-## 🏗️ System Architecture
-
-The system uses a distributed approach to prevent the heavy AI processing from interfering with precise motor control.
+## System design
 
 ```mermaid
-graph LR
-    subgraph Vision Node
-    CAM[ESP32-CAM] -- "Captures Image" --> AI[Edge Impulse Model]
-    IR[IR Sensor] -- "Trigger" --> CAM
-    end
-
-    subgraph Control Node
-    ESP[ESP32 Controller] -- "Controls" --> MOTOR[Stepper Motor]
-    ESP -- "Controls" --> SERVO[Servo Lid]
-    ESP -- "Alerts" --> BUZZ[Buzzer]
-    end
-
-    AI -- "Classification (HTTP)" --> ESP
-    User[Web Dashboard] -.-> CAM
-    User -.-> ESP
+flowchart LR
+    IR[IR sensor] --> Camera[ESP32-CAM]
+    Camera --> Model[Edge Impulse inference]
+    Model -->|HTTP sort request| Controller[ESP32 controller]
+    Controller --> Stepper[ULN2003 and stepper motor]
+    Controller --> Servo[Lid servo]
+    Controller --> Buzzer[Buzzer and status LED]
+    Browser[Local browser] --> Camera
+    Browser --> Controller
 ```
 
----
+The camera performs inference when its active-low IR input detects an object. In the object-detection branch, labels `metal`, `plastic`, and `paper` above the `0.6` confidence threshold contribute to a three-match confirmation counter. A successful request increments session counters and starts a five-second pause. Missing detections do not clear that branch's confirmation counter.
 
-## 🔌 Hardware Setup
+The controller accepts the three labels, moves to the configured bin offset, opens the lid, waits two seconds, closes it, and returns to its starting offset. Motor operations are blocking; HTTP acknowledgment means the request was accepted, not that the physical cycle completed.
 
-### 1. Vision Node (ESP32-CAM)
-*   **Power**: 5V stable supply.
-*   **Active Peripherals**:
-    *   **IR Sensor**: Connected to `GPIO 15`. Detects waste presence to wake up the AI.
+## Repository layout
 
-### 2. Control Node (ESP32)
-*   **Power**: Needs a **Dual-Rail Setup**. ESP32 powered via USB, Motors powered via **External 5V**.
-*   **Pin Mapping**:
+| Path | Responsibility |
+| --- | --- |
+| [esp32_camera/esp32_camera.ino](esp32_camera/esp32_camera.ino) | Camera configuration, IR trigger, inference, HTTP client, and monitoring page |
+| [esp32_bin_controller/esp32_bin_controller.ino](esp32_bin_controller/esp32_bin_controller.ino) | Stepper sequence, servo control, buzzer, and control page |
 
-| Component | ESP32 Pin | Notes |
-| :--- | :--- | :--- |
-| **Stepper IN1** | GPIO 13 | ULN2003 Driver |
-| **Stepper IN2** | GPIO 18 | ULN2003 Driver |
-| **Stepper IN3** | GPIO 14 | ULN2003 Driver |
-| **Stepper IN4** | GPIO 19 | ULN2003 Driver |
-| **Servo Signal** | GPIO 26 | Lid Control |
-| **Buzzer (+)** | GPIO 23 | Signal |
+## Hardware and software
 
-> **⚠️ CRITICAL**: Connect the GND of your external 5V power supply to the ESP32 GND!
+- AI Thinker ESP32-CAM with camera and PSRAM.
+- A separate ESP32 development board for actuator control.
+- Active-low IR object sensor; 28BYJ-48 stepper and ULN2003 driver; lid servo; buzzer.
+- A regulated supply appropriate for the boards and actuators, with a shared ground. Power actuators through their suitable external supply and driver.
+- Arduino IDE with ESP32 board support and the `ESP32Servo` library.
+- An Edge Impulse Arduino export that provides `WasteSorter2_inferencing.h` and the Edge Impulse SDK. This export is **not included** in the repository.
 
----
+The camera sketch carries an upstream example note for ESP32 Arduino core `2.0.4`. No project-wide dependency lock or verified build matrix is included; confirm library and board-package compatibility before changing versions.
 
-## 🧠 Edge Impulse Integration
+### Pin mapping
 
-The core intelligence is built using [Edge Impulse](https://edgeimpulse.com).
+The camera's built-in camera connections use the AI Thinker mapping declared in its sketch. Its additional IR input is GPIO `15`.
 
-1.  **Data Collection**: 500+ images of local waste items (cans, bottles, paper scraps) were collected using the ESP32-CAM.
-2.  **Training**: A customized MobileNetV2 was trained with Transfer Learning to recognize our specific 3 classes.
-3.  **Deployment**: The model was exported as an **Arduino Library**, allowing it to run entirely offline on the ESP32-CAM.
+| Controller peripheral | GPIO |
+| --- | --- |
+| ULN2003 IN1 / IN2 / IN3 / IN4 | `13` / `18` / `14` / `19` |
+| Servo signal | `26` |
+| Buzzer | `23` |
+| Status LED | `2` |
 
----
+Check signal voltages, boot-pin constraints, and actuator travel against your board and mechanical assembly. The startup routine energizes each stepper output briefly.
 
-## 🚀 Installation
+## Setup
 
-### 1. Network Configuration
-The system is pre-configured with **Static IPs** for easy access:
-*   **Camera Dashboard**: `http://192.168.0.200`
-*   **Bin Controller**: `http://192.168.0.201`
+1. Obtain or train the matching Edge Impulse model and import its Arduino library. Confirm that the model labels match the firmware path you intend to use.
+2. Open each sketch in its own Arduino project. Select AI Thinker ESP32-CAM for the camera and the board definition matching the controller hardware.
+3. Set the Wi-Fi credentials locally in both sketches. Keep real credentials out of commits and public screenshots.
+4. Update `local_IP`, `gateway`, and `subnet` for both devices, and set `binControllerIP` in the camera sketch to the controller's address. Reserve the chosen addresses to avoid DHCP conflicts.
+5. Review `METAL_SWING_STEPS`, `PLASTIC_SWING_STEPS`, `PAPER_SWING_STEPS`, and the servo angles against the unloaded mechanism. The current offsets are `1264`, `-1264`, and `0`; they are calibration values, not universal angles.
+6. Upload the controller and camera firmware. Open each serial monitor at `115200` baud and check initialization and network status.
 
-*(Modify `local_IP` in the code if your router uses a different subnet like 192.168.1.x)*
+Default local pages are `http://192.168.0.200/` for vision monitoring and `http://192.168.0.201/` for actuator control. The camera also attempts mDNS registration as `wastesorter-cam.local`.
 
-### 2. Flash the Vision Node
-1.  Open `esp32_camera/esp32_camera.ino`.
-2.  Install the **Edge Impulse Library** zip via Arduino IDE.
-3.  Select Board: **AI Thinker ESP32-CAM**.
-4.  Upload.
+## Operation and validation
 
-### 3. Flash the Control Node
-1.  Open `esp32_bin_controller/esp32_bin_controller.ino`.
-2.  Select Board: **DOIT ESP32 DEVKIT V1**.
-3.  Upload.
+Use a trusted, isolated local network: the firmware provides plain HTTP endpoints without authentication. Anyone able to reach them can view snapshots or issue motor commands. Do not expose these devices through router port forwarding.
 
----
+1. Check the camera page and `/status` output before placing an object at the IR sensor. The displayed feed polls `/snapshot`; it is not a continuous streaming endpoint.
+2. With the mechanism clear, verify each controller position using its manual controls and return it home.
+3. Present one item at a time and compare the serial label, confirmation counter, HTTP result, and physical bin movement.
+4. Test low-confidence objects, object removal between detections, Wi-Fi interruption, and a disconnected controller. Record the board/core/library versions and observed timing with any demonstration.
 
-## 🎮 Usage
+## Current limitations
 
-### Automatic Mode
-Simply place an item in front of the IR sensor. The camera will:
-1.  Detect the object.
-2.  Wait for **3 consecutive confirmations** of the same class.
-3.  Send the sort command to the Bin Controller.
+- The repository does not include model weights, training data, accuracy measurements, latency benchmarks, or a mechanical drawing.
+- The image-classification branch accepts `contaminated` where the controller expects `paper`; align the label handling before using that model type. Its dashboard updates also differ from the object-detection branch.
+- The object-detection confirmation counter can survive missing detections, so three matches need not be consecutive frames.
+- Manual rotation has no automatic timeout, end-stop, or physical position feedback. The `/test` step count is not bounded.
+- Camera and motor endpoints need authentication and request validation before use beyond an isolated demonstration. Blocking movement limits responsiveness during a cycle.
+- A classifier-error return path does not free the allocated image buffer; repeated errors can exhaust memory.
 
-### Manual Mode (Maintenance)
-Access `http://192.168.0.201` to:
-*   Test motor rotation (Left/Right continuous hold).
-*   Jump to specific bin positions (`Metal`, `Plastic`, `Paper`).
-*   Open/Close the lid manually.
+## Attribution and licensing
 
----
-
-## 📝 License
-This project is open-source and available under the [MIT License](LICENSE).
+The camera sketch retains the Edge Impulse example copyright and permission notice. A repository-wide license file is not currently provided; model exports and third-party libraries also have their own terms.
